@@ -1,0 +1,7 @@
+fastapi
+uvicorn 
+pytesseract
+tesseract 
+# tesseract-ocr
+pdf2image
+# python-poppler
