@@ -5,3 +5,5 @@ tesseract
 # tesseract-ocr
 pdf2image
 # python-poppler
+google-genai
+python-multipart

@@ -1,9 +1,18 @@
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y gcc
+RUN apt-get update && apt-get install -y \
+    gcc \
+    poppler-utils \
+    tesseract-ocr \
+    libleptonica-dev \
+    libtesseract-dev \
+    python3-pil \
+    tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . /app
 
 
