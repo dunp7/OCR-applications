@@ -18,6 +18,9 @@ TEMP_DIR = "./temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 
+pytesseract.pytesseract.tesseract_cmd = r"error_fix/tesseract-ocr/tesseract.exe"  
+
+
 @app.post("/extract_words_per_page")
 async def extract_words(file: UploadFile, lang: str = "vie",page_number: int = Query(..., ge=1)):
     """
@@ -31,7 +34,9 @@ async def extract_words(file: UploadFile, lang: str = "vie",page_number: int = Q
         shutil.copyfileobj(file.file, f)
 
     try:
-        images = convert_from_path(file_path)
+        
+        images = convert_from_path(file_path, poppler_path='error_fix/poppler-24.07.0/Library/bin')  #In Windows System Only
+        # images = convert_from_path(file_path)
 
         if page_number > len(images):
             raise HTTPException(status_code=400, detail=f"PDF only has {len(images)} pages.")
@@ -74,7 +79,8 @@ async def extract_text(file: UploadFile, lang: str = "vie", page_number: int = Q
         shutil.copyfileobj(file.file, f)
 
     try:
-        images = convert_from_path(file_path)
+        images = convert_from_path(file_path, poppler_path='E:/extension/poppler-24.07.0/Library/bin') #In Window System Only
+        # images = convert_from_path(file_path)
         if page_number > len(images):
             raise HTTPException(status_code=400, detail=f"PDF only has {len(images)} pages.")
 
@@ -108,6 +114,7 @@ async def classify_document(file: UploadFile, api_key: str = Query(...), lang: s
         shutil.copyfileobj(file.file, f)
 
     try:
+        images = convert_from_path(file_path, poppler_path='E:/extension/poppler-24.07.0/Library/bin') #In Window System Only
         images = convert_from_path(file_path)
         title_pages_map = {}
         title_list = []

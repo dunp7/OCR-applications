@@ -11,7 +11,13 @@ RUN apt-get update && apt-get install -y \
     libtesseract-dev \
     python3-pil \
     tesseract-ocr-eng \
+    wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Download Vietnamese traineddata
+RUN mkdir -p /usr/share/tesseract-ocr/5/tessdata/ && \
+    wget -P /usr/share/tesseract-ocr/5/tessdata/ https://github.com/tesseract-ocr/tessdata_best/raw/main/vie.traineddata
+
 
 COPY . /app
 
