@@ -10,6 +10,7 @@ from PIL import ImageDraw
 
 from utils import extract_words_with_boxes, gen_answer
 
+
 # Initialize the FastAPI app
 app = FastAPI()
 
