@@ -7,9 +7,10 @@ import shutil
 from fastapi.responses import StreamingResponse
 from io import BytesIO
 from PIL import ImageDraw
-
+import openai
 from utils import extract_words_with_boxes, gen_answer
-
+import json
+import tiktoken
 
 # Initialize the FastAPI app
 app = FastAPI()
@@ -18,11 +19,10 @@ app = FastAPI()
 TEMP_DIR = "./temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-
 pytesseract.pytesseract.tesseract_cmd = r"error_fix/tesseract-ocr/tesseract.exe"  
 
-
-@app.post("/extract_words_per_page")
+#----------------------------------------General--------------------------------------------------------
+@app.post("/extract_words_per_page", tags = ['General'])
 async def extract_words(file: UploadFile, lang: str = "vie",page_number: int = Query(..., ge=1)):
     """
     Return the image of the specified PDF page with bounding boxes drawn around detected words.
@@ -67,8 +67,103 @@ async def extract_words(file: UploadFile, lang: str = "vie",page_number: int = Q
         if os.path.exists(file_path):
             os.remove(file_path)
 
-@app.post("/extract_text_per_page")
-async def extract_text(file: UploadFile, lang: str = "vie", page_number: int = Query(..., ge=1), api_key: str = Query(...)):
+#----------------------------------------Menu--------------------------------------------------------
+SAMPLE_SCHEMA = {
+    "products": [
+        {
+            "title": "Shrimp with Broccoli",
+            "price": "14.45",
+            "category": "Seafood",
+            "is_active": True,
+            "main_ingredients": ["Shrimp", "Broccoli"],
+        },
+        {
+            "title": "Shrimp with Chinese Vegetables",
+            "price": "14.45",
+            "category": "Seafood",
+            "is_active": True,
+            "main_ingredients": ["Shrimp", "Chinese Vegetables"],
+        },
+    ],
+}
+
+@app.post("/extract_raw_text_per_page", tags = ['Menu'])
+async def extract_raw_text(file: UploadFile, lang: str = "vie", page_number: int = Query(..., ge=1)):
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+    file_path = os.path.join(TEMP_DIR, file.filename)
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    try:
+        
+        images = convert_from_path(file_path, poppler_path='error_fix/poppler-24.07.0/Library/bin')  #In Windows System Only
+        # images = convert_from_path(file_path)
+
+        if page_number > len(images):
+            raise HTTPException(status_code=400, detail=f"PDF only has {len(images)} pages.")
+
+        image = images[page_number - 1].convert("RGB")
+        raw_text = pytesseract.image_to_string(image, lang=lang)
+
+        return {"page_number": page_number, "raw_text": raw_text}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+    
+@app.post("/extract_order_per_page", tags = ['Menu'])
+async def extract_menu(file: UploadFile, lang: str = "vie", page_number: int = Query(..., ge=1)):
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+    file_path = os.path.join(TEMP_DIR, file.filename)
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        
+        images = convert_from_path(file_path, poppler_path='error_fix/poppler-24.07.0/Library/bin')  #In Windows System Only
+        # images = convert_from_path(file_path)
+
+        if page_number > len(images):
+            raise HTTPException(status_code=400, detail=f"PDF only has {len(images)} pages.")
+
+        image = images[page_number - 1].convert("RGB")
+        # raw_text = pytesseract.image_to_string(image, lang=lang)
+        words_info = extract_words_with_boxes(image, lang=lang)
+        word_list = [f"{line['word']}|{line['left']},{line['top']},{line['width']},{line['height']}" for line in words_info]
+        ocr_text_with_pos = "\n".join(word_list)
+
+        client = openai.OpenAI(api_key= OPENAI_KEY)
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system",
+                 "content":(
+                    "You are an assistant for extracting structured menu data from OCR text. "
+                    "Your task is to return a JSON object adhering to the following schema: "
+                    f"{json.dumps(SAMPLE_SCHEMA)}. "
+                    "Only use the data from the provided OCR text and position. "
+                    "Each row is each word with position: word|left,top,width,height. "
+                    "If some information is missing, use placeholders or null values. "
+                    "Do not include explanations or extra text in the output."
+                    f"All field values in the JSON object must be {lang} language.")},
+                {
+                "role": "user", "content": f"OCR text with positions: {ocr_text_with_pos}"},
+            ],
+            temperature=0.2,
+            max_tokens=2500)
+        try:
+            menu_extract = json.loads(response.choices[0].message.content.strip())
+            return {"status": "success", "token": response.usage.total_tokens ,"data": menu_extract}
+        except Exception as e:
+            return {"status": "error in json load"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+#----------------------------------------contract--------------------------------------------------------
+@app.post("/extract_title_per_page", tags = ['Contract'])
+async def extract_title(file: UploadFile, lang: str = "vie", page_number: int = Query(..., ge=1), api_key: str = Query(...)):
     """
     Extract and return the text of the specified PDF page.
     """
@@ -105,7 +200,7 @@ async def extract_text(file: UploadFile, lang: str = "vie", page_number: int = Q
             os.remove(file_path)
 
 
-@app.post("/classify_document")
+@app.post("/classify_document", tags = ['Contract'])
 async def classify_document(file: UploadFile, api_key: str = Query(...), lang: str = "vie"):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
