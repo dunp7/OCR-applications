@@ -11,6 +11,10 @@ import openai
 from utils import extract_words_with_boxes, gen_answer
 import json
 import tiktoken
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize the FastAPI app
 app = FastAPI()
@@ -201,7 +205,7 @@ async def extract_title(file: UploadFile, lang: str = "vie", page_number: int = 
 
 
 @app.post("/classify_document", tags = ['Contract'])
-async def classify_document(file: UploadFile, api_key: str = Query(...), lang: str = "vie"):
+async def classify_document(file: UploadFile, page_number: int = None, api_key: str = Query(...), lang: str = "vie"):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
@@ -209,13 +213,17 @@ async def classify_document(file: UploadFile, api_key: str = Query(...), lang: s
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
+    logger.info(f"File path: {file_path}")
+
     try:
-        images = convert_from_path(file_path, poppler_path='E:/extension/poppler-24.07.0/Library/bin') #In Window System Only
-        images = convert_from_path(file_path)
+        images = convert_from_path(file_path, poppler_path='E:/extension/poppler-24.07.0/Library/bin', first_page=1, last_page=page_number or None) #In Window System Only
+        logger.info("Successully converted to images")
+        logger.info(f"Number of pages: {len(images)}")
+        # images = convert_from_path(file_path)
         title_pages_map = {}
         title_list = []
 
-        for page_number, image in enumerate(images, start=1):
+        for page_count, image in enumerate(images, start=1):
             text = pytesseract.image_to_string(image, lang= lang)
 
             if title_list:
@@ -240,11 +248,13 @@ async def classify_document(file: UploadFile, api_key: str = Query(...), lang: s
                 title = "Unknown"
 
             if title in title_pages_map:
-                title_pages_map[title].append(page_number)
+                title_pages_map[title].append(page_count)
             else:
-                title_pages_map[title] = [page_number]
+                title_pages_map[title] = [page_count]
                 title_list.append(title)
 
+            if page_count % 10 == 0:
+                logger.info(f"Processed page {page_count}")
         document_titles = [
             {"title": t, "page_numbers": pages}
             for t, pages in title_pages_map.items()

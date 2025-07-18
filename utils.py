@@ -22,19 +22,16 @@ def extract_words_with_boxes(image, lang="eng"):
 
 
 
-def gen_answer(prompt, key):
+def gen_answer(logic_prompt, key, system_prompt= None):
     client = genai.Client(api_key= key)
     response = client.models.generate_content(
         model="gemini-2.0-flash",
-        contents=prompt,
+        contents=logic_prompt,
         config=GenerateContentConfig(
             temperature=0,
             top_k=1,
             top_p=1,
-            system_instruction=[
-                "Bạn là một chuyên gia về xác định tiêu đề của văn bản",
-                "Hãy xác định chính xác tiêu đề của văn bản, nếu không xác định được, trả về None."
-            ])
+            system_instruction=system_prompt)
     ).text
     time.sleep(4)
     return response
