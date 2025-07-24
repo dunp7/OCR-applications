@@ -22,16 +22,19 @@ def extract_words_with_boxes(image, lang="eng"):
 
 
 
-def gen_answer(logic_prompt, key, system_prompt= None):
+def gen_answer(logic_prompt, key, system_prompt= None, config = None):
     client = genai.Client(api_key= key)
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=logic_prompt,
-        config=GenerateContentConfig(
+    if not config:
+        config = GenerateContentConfig(
             temperature=0,
             top_k=1,
             top_p=1,
             system_instruction=system_prompt)
+        
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=logic_prompt,
+        config=config
     ).text
     time.sleep(4)
     return response

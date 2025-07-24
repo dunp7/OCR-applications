@@ -8,3 +8,5 @@ pdf2image
 google-genai
 python-multipart
 python-dotenv
+minio==7.2.15
+PyPDF2==3.0.1

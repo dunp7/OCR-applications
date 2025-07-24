@@ -1,0 +1,154 @@
+from minio.error import S3Error
+from minio import Minio
+import streamlit as st
+import io
+from PyPDF2 import PdfReader, PdfWriter
+import os
+# Minio DB:
+MINIO_URL= "10.16.91.164:2004"
+MINIO_BUCKET_NAME= "project-ocr"
+MINIO_USERNAME = "minio"
+MINIO_PASSWORD = "minio12345"
+
+
+
+def connect_to_minio():
+    client = Minio(MINIO_URL,
+                access_key=MINIO_USERNAME,
+                secret_key=MINIO_PASSWORD,
+                secure=False)
+
+    # Create the bucket (create if not exists)
+    try:
+        if not client.bucket_exists(MINIO_BUCKET_NAME):
+            print("Bucket does not exist. Creating...")
+            try:
+                client.make_bucket(MINIO_BUCKET_NAME)
+            except Exception as e:
+                pass
+                # st.error(f"Failed to create main bucket: {e}")
+        else:
+            print("Bucket already exists.")
+            pass    
+    except Exception as e:
+        pass
+        # st.error(f"Error checking main bucket: {e}")
+
+    return client
+
+def create_folder(client, bucket, folder_name):
+    try:
+        # Tạo object rỗng với tên "folder/"
+        object_name = folder_name.rstrip("/") + "/placeholder.txt"
+        client.put_object(
+            bucket,
+            object_name,
+            data=io.BytesIO(b""),  # empty
+            length=0,
+            content_type="text/plain"
+        )
+        print(f"✅ Created folder: {folder_name}")
+    except S3Error as e:
+        print(f"❌ Failed to create folder '{folder_name}': {e}")
+
+def list_folders(client, bucket):
+    folders = set()
+    try:
+        objects = client.list_objects(bucket, recursive=False)
+        for obj in objects:
+            if "/" in obj.object_name:
+                folder = obj.object_name.split("/")[0]
+                folders.add(folder)
+        return sorted(list(folders))
+    except S3Error as e:
+        # st.error(f"Error listing folders: {e}")
+        return []
+
+
+def list_level_2_folders(client, bucket, folder_name):
+    folders = set()
+    try:
+        if not folder_name.endswith("/"):
+            folder_name += "/"
+
+        objects = client.list_objects(bucket, prefix=folder_name, recursive=True)
+        for obj in objects:
+            parts = obj.object_name.split("/")
+            if len(parts) >= 2:
+                level2_folder = "/".join(parts[:2])  
+                folders.add(level2_folder)
+        return sorted(folders)
+    except S3Error as e:
+        print(f"❌ MinIO error: {e}")
+        return []
+
+def remove_objects(client, bucket, userid, subject=None, level=None):
+    try:
+        objects = client.list_objects(bucket, prefix=f"{userid}/", recursive=True)
+
+        for obj in objects:
+            object_name = obj.object_name
+            if subject and level:
+                if subject in object_name and level in object_name:
+                    client.remove_object(bucket, object_name)
+            else:
+                client.remove_object(bucket, object_name)
+
+        return True
+    except S3Error as err:
+        return False
+
+def upload_file(client, bucket, file_path, object_name):
+    try:
+        client.fput_object(bucket, object_name, file_path)
+        return True
+    except S3Error as err:
+        return False
+
+def split_pdf_by_titles(input_pdf_path, document_titles, client, bucket_name, output_dir="split_docs"):
+
+    os.makedirs(output_dir, exist_ok=True)
+    reader = PdfReader(input_pdf_path)
+    total_pages = len(reader.pages)
+    uploaded_files = []
+
+    for doc in document_titles:
+        title = doc["title"]
+        folder = doc["folder_recommendation"]
+        pages = doc["page_numbers"]
+
+        writer = PdfWriter()
+        for p in pages:
+            if 1 <= p <= total_pages:
+                writer.add_page(reader.pages[p - 1])
+            else:
+                print(f"[WARNING] Page {p} out of range for title: {title}")
+
+        # Tạo tên file an toàn
+        safe_title = title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
+        filename = f"{safe_title}.pdf"
+        local_folder_path = os.path.join(output_dir, folder)
+        os.makedirs(local_folder_path, exist_ok=True)
+
+        local_file_path = os.path.join(local_folder_path, filename)
+        with open(local_file_path, "wb") as f:
+            writer.write(f)
+
+        # Upload lên MinIO
+        object_name = f"{folder}/{filename}"
+        try:
+            client.fput_object(bucket_name, object_name, local_file_path)
+            uploaded_files.append(object_name)
+        except S3Error as e:
+            print(f"❌ Error uploading {filename}: {e}")
+
+    return uploaded_files
+
+
+if __name__ == "__main__":
+    client = connect_to_minio()
+    create_folder(client, MINIO_BUCKET_NAME, "Material_Acceptance_Forms")
+    create_folder(client, MINIO_BUCKET_NAME, "Material_Quantity_Lists")
+    print(list_folders(client, MINIO_BUCKET_NAME))
+    print(list_level_2_folders(client, MINIO_BUCKET_NAME, "Material_Acceptance_Forms"))
+    
