@@ -17,9 +17,12 @@ def save_uploaded_file(uploaded_file):
     return file_path
 
 def cleanup_file(file_path):
-    """Remove file from temporary directory."""
-    if os.path.exists(file_path):
+    """Remove file or directory from temporary directory."""
+    if os.path.isdir(file_path):
+        shutil.rmtree(file_path)
+    elif os.path.isfile(file_path):
         os.remove(file_path)
+
 # ------------MINIO
 def connect_to_minio():
     client = Minio(MINIO_URL,

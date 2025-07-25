@@ -128,7 +128,7 @@ with tab3:
                         folder_rec = title_obj.get("folder_recommendation", "Other")
 
                         # Clean title
-                        for char in ['\n', '.']:
+                        for char in ['\n', '.', ',',':']:
                             raw_title = raw_title.replace(char, ' ')
                         if not raw_title or raw_title.lower() in ["none", "null", "unknown", "không xác định"]:
                             raw_title = title_list[-1] if title_list else "Không Xác Định"
