@@ -4,14 +4,23 @@ import streamlit as st
 import io
 from PyPDF2 import PdfReader, PdfWriter
 import os
-# Minio DB:
-MINIO_URL= "10.16.91.164:2004"
-MINIO_BUCKET_NAME= "project-ocr"
-MINIO_USERNAME = "minio"
-MINIO_PASSWORD = "minio12345"
+from config.settings import MINIO_URL, MINIO_BUCKET_NAME, MINIO_USERNAME, MINIO_PASSWORD, TEMP_DIR
+import shutil
 
 
+def save_uploaded_file(uploaded_file):
+    """Save uploaded file to temporary directory."""
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    file_path = os.path.join(TEMP_DIR, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return file_path
 
+def cleanup_file(file_path):
+    """Remove file from temporary directory."""
+    if os.path.exists(file_path):
+        os.remove(file_path)
+# ------------MINIO
 def connect_to_minio():
     client = Minio(MINIO_URL,
                 access_key=MINIO_USERNAME,
@@ -142,6 +151,8 @@ def split_pdf_by_titles(input_pdf_path, document_titles, client, bucket_name, ou
         except S3Error as e:
             print(f"❌ Error uploading {filename}: {e}")
 
+    # Clean up 
+    cleanup_file(output_dir)
     return uploaded_files
 
 
