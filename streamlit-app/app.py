@@ -7,10 +7,10 @@ import json
 import re
 from config.settings import MAX_WORKERS, SUPPORTED_LANGUAGES, MINIO_BUCKET_NAME, GOOGLE_API_KEY
 from utils.ocr_utils import perform_ocr, convert_pdf_to_image, extract_words_with_boxes, draw_bounding_boxes
-from utils.file_utils import save_uploaded_file, cleanup_file, split_pdf_by_titles, connect_to_minio, list_folders
-from utils.api_utils import process_title, gen_answer
-
-
+from utils.ocr_utils import list_xlsx_sheets, sheet_to_md, convert_docx
+from utils.file_utils import save_uploaded_file, cleanup_file, split_pdf_by_titles, connect_to_minio, list_folders, split_xlsx_by_titles
+from utils.api_utils import gen_answer
+from utils.app_utils import process_pdf, process_xlsx, process_docx
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,18 +21,18 @@ client = connect_to_minio()
 # Initialize session state
 if "document_titles" not in st.session_state:
     st.session_state.document_titles = []
-if "file_path" not in st.session_state:
-    st.session_state.file_path = None
+
 
 # Main App
-st.title("PDF OCR Extraction and Analysis")
+st.title("Text/ OCR Extraction and Analysis")
 
 # Sidebar
 st.sidebar.header("Input Parameters")
 lang = st.sidebar.selectbox("Language", SUPPORTED_LANGUAGES, index=0)
-uploaded_file = st.sidebar.file_uploader("Upload a PDF file", type=["pdf","xlsx",'docx'])
-page_number = st.sidebar.number_input("Page Number", min_value=1, value=1, step=1)
+uploaded_file = st.sidebar.file_uploader("Upload a file", type=["pdf","xlsx",'docx'])
+page_number = st.sidebar.number_input("Page/ Sheet Number", min_value=1, value=1, step=1)
 worker_nums = st.sidebar.number_input("Number of Workers", min_value=1, max_value=MAX_WORKERS-2, value=1, step=1)
+do_ocr = st.sidebar.checkbox("Perform OCR on all pages (Applied with PDF, DOCX)", value=True)
 if st.sidebar.button("Clear Cache"):
     st.cache_data.clear()
     st.cache_resource.clear()
@@ -43,7 +43,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["Extract Words", "Extract Raw Text", "Identify
 
 # Tab 1: Extract Words with Bounding Boxes
 with tab1:
-    st.header("Extract Words with Bounding Boxes")
+    st.header("Extract Words with Bounding Boxes Using OCR")
     if st.button("Run Extract Words"):
         if not uploaded_file:
             st.error("Please upload a PDF file.")
@@ -67,7 +67,7 @@ with tab2:
     st.header("Extract Raw Text")
     if st.button("Run Extract Raw Text"):
         if not uploaded_file:
-            st.error("Please upload a PDF file.")
+            st.error("Please upload a PDF/ XLSX/ DOCX file.")
         elif uploaded_file.name.endswith(".pdf"):
             file_path = save_uploaded_file(uploaded_file)
             try:
@@ -80,94 +80,55 @@ with tab2:
                 st.error(f"Error processing file: {str(e)}")
             finally:
                 cleanup_file(file_path)
+        elif uploaded_file.name.endswith(".xlsx"):
+            file_path = save_uploaded_file(uploaded_file)
+            try:
+                sheet_names = list_xlsx_sheets(file_path)
+                st.write(f"**Sheet Name**: {sheet_names[page_number-1]}")
+
+                md_text = sheet_to_md(file_path, sheet_name=sheet_names[page_number-1])
+                st.markdown(md_text, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Error processing file: {str(e)}")
+            finally:
+                cleanup_file(file_path)
         else:
-            st.error("Only PDF files are allowed.")
+            st.error("Not the right files are allowed.")
 
 # Tab 3: Identify Title of Document
 with tab3:
     st.header("Identify Title of Document")
     if st.button("Run Classify Document"):
         if not uploaded_file:
-            st.error("Please upload a PDF file.")
-        elif uploaded_file.name.endswith(".pdf"):
+            st.error("Please upload a file.")
+        else:
             file_path = save_uploaded_file(uploaded_file)
             folder_lists = list_folders(client, MINIO_BUCKET_NAME)
+            file_type = uploaded_file.name.split(".")[-1]
             try:
-                with st.spinner("Processing..."):
-                    images = convert_pdf_to_image(file_path, last_page=page_number)
-                    title_pages_map = {}
-                    title_list = []
+                if file_type == "pdf":
+                    document_titles = process_pdf(file_path, page_number, worker_nums, lang, folder_lists, do_ocr=do_ocr)
+                elif file_type == "xlsx":
+                    document_titles = process_xlsx(file_path, page_number, worker_nums, lang, folder_lists)
+                elif file_type == "docx":
+                    document_titles = process_docx(file_path, page_number, worker_nums, lang, folder_lists, do_ocr=do_ocr)
+                else:
+                    st.error("Only PDF, XLSX and DOCX files are allowed.")
+                    document_titles = None
 
-                    # Parallel OCR processing
-                    start_time = time.time()
-                    with ProcessPoolExecutor(max_workers=worker_nums) as executor:
-                        ocr_results = list(executor.map(partial(perform_ocr, lang=lang), images))
-                    st.info(f"OCR processing took {time.time() - start_time:.2f} seconds")
-
-                    # Parallel API calls for title extraction
-                    page_results = []
-                    start_time = time.time()
-                    with ThreadPoolExecutor(max_workers=worker_nums) as executor:
-                        futures = []
-                        prev_title = None
-                        prev_folder = None
-                        for page_count, text in enumerate(ocr_results, start=1):
-                            future = executor.submit(process_title, page_count, text, prev_title, lang, prev_folder, folder_lists)
-                            futures.append(future)
-                            prev_title = future.result()[1]['title']
-                            prev_folder = future.result()[1]['folder_recommendation']
-                        page_results = [future.result() for future in futures]
-                    st.info(f"API processing took {time.time() - start_time:.2f} seconds")
-
-                    # Sort results by page number
-                    page_results.sort(key=lambda x: x[0])
-
-                    for page_count, title_obj in page_results:
-                        raw_title = re.sub(r'\s+', ' ', title_obj.get("title", "")).strip()
-                        raw_title = re.sub(r'[.,;:!]+$', '', raw_title).strip()
-                        folder_rec = title_obj.get("folder_recommendation", "Other")
-
-                        # Clean title
-                        for char in ['\n', '.', ',',':']:
-                            raw_title = raw_title.replace(char, ' ')
-                        if not raw_title or raw_title.lower() in ["none", "null", "unknown", "không xác định"]:
-                            raw_title = title_list[-1] if title_list else "Không Xác Định"
-                            folder_rec = "Other"
-
-                        if raw_title in title_pages_map:
-                            title_pages_map[raw_title]["pages"].append(page_count)
-                        else:
-                            title_pages_map[raw_title] = {
-                                "pages": [page_count],
-                                "folder": folder_rec
-                            }
-                            title_list.append(raw_title)
-
-                        if page_count % 10 == 0:
-                            logger.info(f"Processed page {page_count}")
-
-                    document_titles = [
-                        {
-                            "title": title,
-                            "page_numbers": data["pages"],
-                            "folder_recommendation": data["folder"]
-                        }
-                        for title, data in title_pages_map.items()
-                    ]
+                if document_titles:
                     st.session_state.document_titles = document_titles
-                    if document_titles:
-                        st.json({"document_titles": document_titles})
-                    else:
-                        st.error("No document titles found.")
+                    st.json({"document_titles": document_titles})
+                elif not st.error("No document titles found."):  
+                    pass
             except Exception as e:
-                st.error(f"Error processing file: {str(e)}")
+                st.error(f"Error processing file {file_type}: {str(e)}")
             finally:
                 cleanup_file(file_path)
-        else:
-            st.error("Only PDF files are allowed.")
 
 # Tab 4: Arrange Document to Folders
 with tab4:
+    # Hiện folder hiện có
     st.header("Arrange Document to Folders")
     folderlist = list_folders(client, MINIO_BUCKET_NAME)
     st.subheader("📂 All Folders in Bucket")
@@ -176,6 +137,7 @@ with tab4:
             st.markdown(f"- 📁 **{folder}**")
     else:
         st.info("No folders found in the bucket.")
+    # Sắp xếp folder
     st.subheader("Arrange Folders")
     if not st.session_state.document_titles:
         st.error("No document titles found. Please run 'Identify Title of Document' first.")
@@ -188,10 +150,12 @@ with tab4:
                 st.error("The folder name is blank -> Use AI Recommendation")
             logger.info(f"Arrange to these folders: {folders}")
             try:
-                with st.spinner("Organizing PDFs..."):
+                with st.spinner("Organizing documents..."):
                     if len(folders) == len(folderlist):
+                        # ko điền folder name -> sử dụng AI recommendation
                         title_to_folder = {title["title"]: title["folder_recommendation"] for title in st.session_state.document_titles}
                     else:
+                        # ko điền folder name -> sử dụng người dùng nhập
                         titles = [doc["title"] for doc in st.session_state.document_titles]
                         prompt = f"""
                             Bạn là chuyên gia về sắp xếp các file vào folder theo tiêu đề.
@@ -222,17 +186,56 @@ with tab4:
                             st.warning(f"Some titles were not mapped: {missing_titles}. They will be placed in 'Other'.")
                             for t in missing_titles:
                                 title_to_folder[t] = "Other"
+                                uploaded = split_xlsx_by_titles(
+                                    input_xlsx_path=file_path,
+                                    document_titles=st.session_state.document_titles,
+                                    client=client,
+                                    bucket_name=MINIO_BUCKET_NAME,
+                                )
+                    
+                    
                     file_path = save_uploaded_file(uploaded_file)
-                    uploaded = split_pdf_by_titles(
-                        input_pdf_path=file_path,
-                        document_titles=st.session_state.document_titles,
-                        client=client,
-                        bucket_name=MINIO_BUCKET_NAME
-                    )
+                    file_type = uploaded_file.name.split(".")[-1].lower()
+                    # Process based on file type
+                    if file_type == "pdf":
+                        print(file_path)
+                        # Split PDF by titles and save to folders
+                        uploaded = split_pdf_by_titles(
+                            input_pdf_path=file_path,
+                            document_titles=st.session_state.document_titles,
+                            client=client,
+                            bucket_name=MINIO_BUCKET_NAME
+                        )
+                    
+                    elif file_type == "docx":
+                        print(file_path)
+                        file_path = convert_docx(file_path)
+                        uploaded = split_pdf_by_titles(
+                            input_pdf_path=file_path,
+                            document_titles=st.session_state.document_titles,
+                            client=client,
+                            bucket_name=MINIO_BUCKET_NAME
+                        )
+
+                    
+                    elif file_type == "xlsx":
+                        print(file_path)
+                        uploaded = split_xlsx_by_titles(
+                                input_xlsx_path=file_path,
+                                document_titles=st.session_state.document_titles,
+                                client=client,
+                                bucket_name=MINIO_BUCKET_NAME
+                        )
+                    
+                    else:
+                        st.error("Only PDF, XLSX, and DOCX files are allowed.")
+                        st.stop()
+
+                    # Display folder structure
                     folder_structure = {}
                     for doc in st.session_state.document_titles:
                         title = doc["title"]
-                        pages = doc["page_numbers"]
+                        pages = doc["page_numbers/ sheet numbers"]
                         folder = title_to_folder.get(title, "Other")
                         if folder not in folder_structure:
                             folder_structure[folder] = []
@@ -241,8 +244,9 @@ with tab4:
                     for folder, docs in folder_structure.items():
                         with st.expander(f"📁 {folder}"):
                             for doc in docs:
-                                st.markdown(f"📜 **{doc['title']}** (Pages: {', '.join(map(str, doc['pages']))})")
+                                pages_info = doc["pages"] if isinstance(doc["pages"], str) else ', '.join(map(str, doc["pages"]))
+                                st.markdown(f"📜 **{doc['title']}** (Pages: {pages_info})")
             except Exception as e:
-                st.error(f"Error organizing PDFs: {str(e)}")
+                st.error(f"Error organizing {file_type}: {str(e)}")
             finally:
                 cleanup_file(file_path)

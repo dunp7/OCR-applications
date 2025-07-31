@@ -51,7 +51,7 @@ def process_title(page_count, text, prev_title, lang, prev_folder, folderlist):
     - Nếu dùng lại tiêu đề 'prev_title' của trang trước → dùng lại `prev_folder` của trang trước.
     - Nếu tiêu đề mới:
         + Ưu tiên folder khớp chính xác với tiêu đề trong danh sách folder(nếu có) (so sánh sau khi chuẩn hóa).
-        + Nếu không có folder khớp, đề xuất folder mới từ nội dung hoặc tiêu đề.
+        + Nếu không có folder khớp, đề xuất **tên folder mới** từ nội dung hoặc tiêu đề.
         + folder mới cần ngắn gọn, nếu lên dự án mà nó thuộc về. 
 
     ### Đầu ra:
