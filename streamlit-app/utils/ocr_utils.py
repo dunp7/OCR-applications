@@ -7,7 +7,7 @@ import pandas as pd
 from docx2pdf import convert
 import subprocess
 import os
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH # Windows
+# pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH # Windows
 
 
 # --- XLSX SHEET
@@ -91,8 +91,8 @@ def extract_words_with_boxes(image, lang="eng"):
 def convert_pdf_to_image(file_path, first_page=1, last_page=1):
     """Convert a PDF page to an image."""
     try:
-        images = convert_from_path(file_path, poppler_path=POPPLER_PATH, first_page=first_page, last_page=last_page) # In Windows
-        # images = convert_from_path(file_path, first_page=first_page, last_page=last_page)
+        # images = convert_from_path(file_path, poppler_path=POPPLER_PATH, first_page=first_page, last_page=last_page) # In Windows
+        images = convert_from_path(file_path, first_page=first_page, last_page=last_page)
         if not isinstance(images, list):
             images = [images]
         return images

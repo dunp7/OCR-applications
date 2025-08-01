@@ -8,6 +8,9 @@ from config.settings import MINIO_URL, MINIO_BUCKET_NAME, MINIO_USERNAME, MINIO_
 import shutil
 import xlwings as xw
 import time
+import subprocess
+from openpyxl import load_workbook, Workbook
+
 def save_uploaded_file(uploaded_file):
     """Save uploaded file to temporary directory."""
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -171,53 +174,121 @@ def split_pdf_by_titles(input_pdf_path, document_titles, client, bucket_name, ou
 #             print(f"Error when processing file: {sheet.name}")
 #     wb.close()
 #     app.quit()
-def split_xlsx_by_titles(input_xlsx_path, document_titles, client, bucket_name, output_dir="split_docs"):
+# def split_xlsx_by_titles(input_xlsx_path, document_titles, client, bucket_name, output_dir="split_docs"):
 
-    os.makedirs(output_dir, exist_ok=True)
-    app = xw.App(visible=False)
-    try:
-        wb = app.books.open(input_xlsx_path)
-        uploaded_files = []
+#     os.makedirs(output_dir, exist_ok=True)
+#     app = xw.App(visible=False)
+#     try:
+#         wb = app.books.open(input_xlsx_path)
+#         uploaded_files = []
         
-        title_map = {}
-        for doc in document_titles:
-            title = doc["title"]
-            sheets = doc["page_numbers/ sheet numbers"]
-            folder = doc["folder_recommendation"]
-            for sheet_ref in sheets:
-                title_map[sheet_ref] = (folder,title)
+#         title_map = {}
+#         for doc in document_titles:
+#             title = doc["title"]
+#             sheets = doc["page_numbers/ sheet numbers"]
+#             folder = doc["folder_recommendation"]
+#             for sheet_ref in sheets:
+#                 title_map[sheet_ref] = (folder,title)
 
      
-        for sheet_idx, sheet in enumerate(wb.sheets, 1):
-            try:
-                folder, safe_title = title_map[sheet_idx]
-                safe_title = safe_title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
-                filename = f"{safe_title}.xlsx"
+#         for sheet_idx, sheet in enumerate(wb.sheets, 1):
+#             try:
+#                 folder, safe_title = title_map[sheet_idx]
+#                 safe_title = safe_title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
+#                 filename = f"{safe_title}.xlsx"
                 
-                sheet.api.Copy()
-                wb_new = xw.books.active
+#                 sheet.api.Copy()
+#                 wb_new = xw.books.active
                 
-                local_folder_path = os.path.join(output_dir, folder)
-                os.makedirs(local_folder_path, exist_ok=True)
-                local_file_path = os.path.join(local_folder_path, filename)
-                wb_new.save(local_file_path)
-                wb_new.close()
-                # Upload to MinIO
-                object_name = f"{folder}/{filename}"
-                try:
-                    client.fput_object(bucket_name, object_name, local_file_path)
-                    uploaded_files.append(object_name)
-                except S3Error as e:
-                    print(f"❌ Error uploading {filename}: {e}")
-            except Exception as e:
-                print(f"[WARNING] Error processing sheet {sheet.name}: {e}")
+#                 local_folder_path = os.path.join(output_dir, folder)
+#                 os.makedirs(local_folder_path, exist_ok=True)
+#                 local_file_path = os.path.join(local_folder_path, filename)
+#                 wb_new.save(local_file_path)
+#                 wb_new.close()
+#                 # Upload to MinIO
+#                 object_name = f"{folder}/{filename}"
+#                 try:
+#                     client.fput_object(bucket_name, object_name, local_file_path)
+#                     uploaded_files.append(object_name)
+#                 except S3Error as e:
+#                     print(f"❌ Error uploading {filename}: {e}")
+#             except Exception as e:
+#                 print(f"[WARNING] Error processing sheet {sheet.name}: {e}")
         
-        wb.close()
-    finally:
-        app.quit()
+#         wb.close()
+#     finally:
+#         app.quit()
 
+#     cleanup_file(output_dir)
+#     return uploaded_files
+
+def convert_xlsx_to_pdf(input_path, output_dir):
+    result = subprocess.run([
+        "libreoffice", "--headless", "--convert-to", "pdf", input_path, "--outdir", output_dir
+    ], capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"LibreOffice convert failed: {result.stderr}")
+    
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    return os.path.join(output_dir, f"{base_name}.pdf")
+
+def split_xlsx_by_titles(input_xlsx_path, document_titles, client, bucket_name, output_dir="split_docs"):
+    os.makedirs(output_dir, exist_ok=True)
+    uploaded_files = []
+
+    wb = load_workbook(filename=input_xlsx_path)
+    
+    # Map: sheet_index → (folder, title)
+    title_map = {}
+    for doc in document_titles:
+        title = doc["title"]
+        sheets = doc["page_numbers/ sheet numbers"]
+        folder = doc["folder_recommendation"]
+        for sheet_ref in sheets:
+            title_map[sheet_ref] = (folder, title)
+
+    for sheet_idx, sheetname in enumerate(wb.sheetnames, 1):
+        try:
+            if sheet_idx not in title_map:
+                print(f"⚠️ Skip sheet {sheetname} – no mapping")
+                continue
+
+            folder, title = title_map[sheet_idx]
+            safe_title = title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
+            local_folder_path = os.path.join(output_dir, folder)
+            os.makedirs(local_folder_path, exist_ok=True)
+            temp_xlsx_path = os.path.join(local_folder_path, f"{safe_title}.xlsx")
+
+            # Create new Excel file with 1 sheet
+            new_wb = Workbook()
+            new_ws = new_wb.active
+            new_ws.title = sheetname
+
+            source_ws = wb[sheetname]
+            for row in source_ws.iter_rows(values_only=True):
+                new_ws.append(row)
+
+            new_wb.save(temp_xlsx_path)
+            new_wb.close()
+
+            # Convert to PDF
+            pdf_path = convert_xlsx_to_pdf(temp_xlsx_path, local_folder_path)
+            object_name = f"{folder}/{safe_title}.pdf"
+
+            # Upload PDF
+            try:
+                client.fput_object(bucket_name, object_name, pdf_path)
+                uploaded_files.append(object_name)
+            except S3Error as e:
+                print(f"❌ Error uploading {object_name}: {e}")
+        except Exception as e:
+            print(f"[WARNING] Error processing sheet {sheetname}: {e}")
+
+    wb.close()
     cleanup_file(output_dir)
     return uploaded_files
+
 
 if __name__ == "__main__":
     client = connect_to_minio()
