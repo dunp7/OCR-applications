@@ -7,7 +7,7 @@ import pandas as pd
 from docx2pdf import convert
 import subprocess
 import os
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH # Windows
+# pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH # Windows
 
 
 # --- XLSX SHEET
@@ -34,37 +34,37 @@ def sheet_to_md(file_path, sheet_name):
 
 
 #--- DOCX TEXT
-def convert_docx(file_path):
-    try: 
-        pdf_path = file_path.replace(".docx", ".pdf")
-        print(pdf_path)
-        print(file_path)
-        convert(file_path, pdf_path)
-        return pdf_path
-    except Exception as e:
-        print(e)
-        return None
-
-# def convert_docx(input_path: str):
-#     output_dir = os.path.dirname(input_path)
-#     try:
-#         subprocess.run([
-#             "soffice",
-#             "--headless",
-#             "--convert-to", "pdf",
-#             "--outdir", output_dir,
-#             input_path
-#         ], check=True)
-
-#         pdf_path = input_path.replace(".docx", ".pdf")
-#         if os.path.exists(pdf_path):
-#             return pdf_path
-#         else:
-#             print("❌ PDF not created")
-#             return None
+# def convert_docx(file_path):
+#     try: 
+#         pdf_path = file_path.replace(".docx", ".pdf")
+#         print(pdf_path)
+#         print(file_path)
+#         convert(file_path, pdf_path)
+#         return pdf_path
 #     except Exception as e:
-#         print(f"❌ Error converting DOCX to PDF: {e}")
+#         print(e)
 #         return None
+
+def convert_docx(input_path: str):
+    output_dir = os.path.dirname(input_path)
+    try:
+        subprocess.run([
+            "soffice",
+            "--headless",
+            "--convert-to", "pdf",
+            "--outdir", output_dir,
+            input_path
+        ], check=True)
+
+        pdf_path = input_path.replace(".docx", ".pdf")
+        if os.path.exists(pdf_path):
+            return pdf_path
+        else:
+            print("❌ PDF not created")
+            return None
+    except Exception as e:
+        print(f"❌ Error converting DOCX to PDF: {e}")
+        return None
 
 # --- PDF OCR
 def perform_ocr(image, lang):
@@ -91,8 +91,8 @@ def extract_words_with_boxes(image, lang="eng"):
 def convert_pdf_to_image(file_path, first_page=1, last_page=1):
     """Convert a PDF page to an image."""
     try:
-        images = convert_from_path(file_path, poppler_path=POPPLER_PATH, first_page=first_page, last_page=last_page) # In Windows
-        # images = convert_from_path(file_path, first_page=first_page, last_page=last_page)
+        # images = convert_from_path(file_path, poppler_path=POPPLER_PATH, first_page=first_page, last_page=last_page) # In Windows
+        images = convert_from_path(file_path, first_page=first_page, last_page=last_page)
         if not isinstance(images, list):
             images = [images]
         return images
