@@ -8,7 +8,7 @@ import PyPDF2
 import logging
 from utils.ocr_utils import perform_ocr, convert_pdf_to_image, list_xlsx_sheets, sheet_to_md, convert_docx
 from utils.api_utils import process_title
-
+from utils.file_utils import cleanup_file
 logger = logging.getLogger(__name__)
 ## -------------------------------------------Tab 3: Identify Title of Document
 def clean_title(raw_title, title_list):
@@ -110,4 +110,12 @@ def process_docx(file_path, page_number, worker_nums, lang, folder_lists, do_ocr
     """Process DOCX file by converting to PDF and extracting titles from half the pages."""
     with st.spinner("Converting DOCX to PDF..."):
         pdf_path = convert_docx(file_path)
-    return process_pdf(pdf_path, page_number, worker_nums, lang, folder_lists, do_ocr)
+
+    try:    
+        result = process_pdf(pdf_path, page_number, worker_nums, lang, folder_lists, do_ocr)
+    except Exception as e:
+        print(e)
+    finally:
+        print(f"File {pdf_path} deleted")
+        cleanup_file(pdf_path)
+    return result

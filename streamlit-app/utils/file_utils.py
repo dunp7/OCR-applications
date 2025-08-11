@@ -120,45 +120,64 @@ def upload_file(client, bucket, file_path, object_name):
     except S3Error as err:
         return False
 
-def split_pdf_by_titles(input_pdf_path, document_titles, client, bucket_name, output_dir="split_docs"):
+def split_pdf_by_titles(input_pdf_path,document_titles, client, bucket_name,input_type = "pdf", output_dir="split_docs"):
 
     os.makedirs(output_dir, exist_ok=True)
     reader = PdfReader(input_pdf_path)
     total_pages = len(reader.pages)
     uploaded_files = []
 
-    for doc in document_titles:
-        title = doc["title"]
-        folder = doc["folder_recommendation"]
-        pages = doc["page_numbers/ sheet numbers"]
+    # Check if all sheets belong to one single title
+    mapped_titles = {doc["title"] for doc in document_titles}
+    all_pages = sorted(p for doc in document_titles for p in doc["page_numbers/ sheet numbers"])
+    
+    if len(mapped_titles) == 1 and sorted(all_pages) == list(range(1, total_pages + 1)):
+        only_title = mapped_titles.pop()
+        folder = document_titles[0]["folder_recommendation"]
+        safe_title = only_title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
+        object_name = f"{folder}/{safe_title}.{input_type}"
 
-        writer = PdfWriter()
-        for p in pages:
-            if 1 <= p <= total_pages:
-                writer.add_page(reader.pages[p - 1])
-            else:
-                print(f"[WARNING] Page {p} out of range for title: {title}")
-
-        # Tạo tên file an toàn
-        safe_title = title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
-        filename = f"{safe_title}.pdf"
-        local_folder_path = os.path.join(output_dir, folder)
-        os.makedirs(local_folder_path, exist_ok=True)
-
-        local_file_path = os.path.join(local_folder_path, filename)
-        with open(local_file_path, "wb") as f:
-            writer.write(f)
-
-        # Upload lên MinIO
-        object_name = f"{folder}/{filename}"
         try:
-            client.fput_object(bucket_name, object_name, local_file_path)
+            client.fput_object(bucket_name, object_name, input_pdf_path)
             uploaded_files.append(object_name)
+            print(f"✅ Uploaded whole {input_type} as {object_name}")
         except S3Error as e:
-            print(f"❌ Error uploading {filename}: {e}")
+            print(f"❌ Error uploading {object_name}: {e}")
+    else:
+        # Otherwise, split and convert
+        for doc in document_titles:
+            title = doc["title"]
+            folder = doc["folder_recommendation"]
+            pages = doc["page_numbers/ sheet numbers"]
+
+            writer = PdfWriter()
+            for p in pages:
+                if 1 <= p <= total_pages:
+                    writer.add_page(reader.pages[p - 1])
+                else:
+                    print(f"[WARNING] Page {p} out of range for title: {title}")
+
+            # Tạo tên file an toàn
+            safe_title = title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
+            filename = f"{safe_title}.pdf"
+            local_folder_path = os.path.join(output_dir, folder)
+            os.makedirs(local_folder_path, exist_ok=True)
+
+            local_file_path = os.path.join(local_folder_path, filename)
+            with open(local_file_path, "wb") as f:
+                writer.write(f)
+
+            # Upload lên MinIO
+            object_name = f"{folder}/{filename}"
+            try:
+                client.fput_object(bucket_name, object_name, local_file_path)
+                uploaded_files.append(object_name)
+            except S3Error as e:
+                print(f"❌ Error uploading {filename}: {e}")
 
     # Clean up 
     cleanup_file(output_dir)
+    cleanup_file(input_pdf_path)
     return uploaded_files
 
 # def split_xlsx(excel_file):
@@ -248,45 +267,63 @@ def split_xlsx_by_titles(input_xlsx_path, document_titles, client, bucket_name, 
         for sheet_ref in sheets:
             title_map[sheet_ref] = (folder, title)
 
-    for sheet_idx, sheetname in enumerate(wb.sheetnames, 1):
+    # Check if all sheets belong to one single title
+    mapped_titles = {title_map[i][1] for i in range(1, len(wb.sheetnames) + 1) if i in title_map}
+    if len(mapped_titles) == 1 and len(mapped_titles) != 0:
+        only_title = mapped_titles.pop()
+        folder, _ = next(iter(title_map.values()))
+        safe_title = only_title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
+        object_name = f"{folder}/{safe_title}.xlsx"
+
         try:
-            if sheet_idx not in title_map:
-                print(f"⚠️ Skip sheet {sheetname} – no mapping")
-                continue
-
-            folder, title = title_map[sheet_idx]
-            safe_title = title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
-            local_folder_path = os.path.join(output_dir, folder)
-            os.makedirs(local_folder_path, exist_ok=True)
-            temp_xlsx_path = os.path.join(local_folder_path, f"{safe_title}.xlsx")
-
-            # Create new Excel file with 1 sheet
-            new_wb = Workbook()
-            new_ws = new_wb.active
-            new_ws.title = sheetname
-
-            source_ws = wb[sheetname]
-            for row in source_ws.iter_rows(values_only=True):
-                new_ws.append(row)
-
-            new_wb.save(temp_xlsx_path)
-            new_wb.close()
-
-            # Convert to PDF
-            pdf_path = convert_xlsx_to_pdf(temp_xlsx_path, local_folder_path)
-            object_name = f"{folder}/{safe_title}.pdf"
-
-            # Upload PDF
+            client.fput_object(bucket_name, object_name, input_xlsx_path)
+            uploaded_files.append(object_name)
+            print(f"✅ Uploaded whole file as {object_name}")
+        except S3Error as e:
+            print(f"❌ Error uploading {object_name}: {e}")
+    else:
+        # Otherwise, split and convert
+        for sheet_idx, sheetname in enumerate(wb.sheetnames, 1):
             try:
-                client.fput_object(bucket_name, object_name, pdf_path)
-                uploaded_files.append(object_name)
-            except S3Error as e:
-                print(f"❌ Error uploading {object_name}: {e}")
-        except Exception as e:
-            print(f"[WARNING] Error processing sheet {sheetname}: {e}")
+                if sheet_idx not in title_map:
+                    print(f"⚠️ Skip sheet {sheetname} – no mapping")
+                    continue
+
+                folder, title = title_map[sheet_idx]
+                safe_title = title.replace(" ", "_").replace("/", "_").replace("\\", "_")[:100]
+                local_folder_path = os.path.join(output_dir, folder)
+                os.makedirs(local_folder_path, exist_ok=True)
+                temp_xlsx_path = os.path.join(local_folder_path, f"{safe_title}.xlsx")
+
+                # Create new Excel file with 1 sheet
+                new_wb = Workbook()
+                new_ws = new_wb.active
+                new_ws.title = sheetname
+
+                source_ws = wb[sheetname]
+                for row in source_ws.iter_rows(values_only=True):
+                    new_ws.append(row)
+
+                new_wb.save(temp_xlsx_path)
+                new_wb.close()
+
+                # Convert to PDF
+                pdf_path = convert_xlsx_to_pdf(temp_xlsx_path, local_folder_path)
+                object_name = f"{folder}/{safe_title}.pdf"
+
+                # Upload PDF
+                try:
+                    client.fput_object(bucket_name, object_name, pdf_path)
+                    uploaded_files.append(object_name)
+                    print(f"✅ Uploaded {object_name}")
+                except S3Error as e:
+                    print(f"❌ Error uploading {object_name}: {e}")
+            except Exception as e:
+                print(f"[WARNING] Error processing sheet {sheetname}: {e}")
 
     wb.close()
     cleanup_file(output_dir)
+    cleanup_file(input_xlsx_path)
     return uploaded_files
 
 

@@ -124,6 +124,7 @@ with tab3:
             except Exception as e:
                 st.error(f"Error processing file {file_type}: {str(e)}")
             finally:
+                print(f"File {file_path} deleted")
                 cleanup_file(file_path)
 
 # Tab 4: Arrange Document to Folders
@@ -204,17 +205,23 @@ with tab4:
                             input_pdf_path=file_path,
                             document_titles=st.session_state.document_titles,
                             client=client,
-                            bucket_name=MINIO_BUCKET_NAME
+                            bucket_name=MINIO_BUCKET_NAME,
+                            input_type="pdf"
                         )
                     
                     elif file_type == "docx":
                         print(file_path)
-                        file_path = convert_docx(file_path)
+                        pdf_file_path = convert_docx(file_path)
+                        try:
+                            cleanup_file(file_path)
+                        except Exception as e:
+                            print(e)
                         uploaded = split_pdf_by_titles(
-                            input_pdf_path=file_path,
+                            input_pdf_path=pdf_file_path,
                             document_titles=st.session_state.document_titles,
                             client=client,
-                            bucket_name=MINIO_BUCKET_NAME
+                            bucket_name=MINIO_BUCKET_NAME,
+                            input_type="docx"
                         )
 
                     
